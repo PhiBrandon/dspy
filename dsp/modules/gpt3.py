@@ -4,8 +4,7 @@ from typing import Any, Literal, Optional, cast
 
 import backoff
 import openai
-import openai.error
-from openai.openai_object import OpenAIObject
+from openai import RateLimitError, InternalServerError, APIError, OpenAI
 
 from dsp.modules.cache_utils import CacheMemory, NotebookCacheMemory, cache_turn_on
 from dsp.modules.lm import LM
@@ -50,7 +49,7 @@ class GPT3(LM):
                 "engine" in kwargs or "deployment_id" in kwargs
             ), "Must specify engine or deployment_id for Azure API instead of model."
             assert "api_version" in kwargs, "Must specify api_version for Azure API"
-            assert "api_base" in kwargs, "Must specify api_base for Azure API"
+            assert "base_url" in kwargs, "Must specify base_url for Azure API"
             openai.api_type = "azure"
             if kwargs.get("api_version"):
                 openai.api_version = kwargs["api_version"]
@@ -58,8 +57,9 @@ class GPT3(LM):
         if api_key:
             openai.api_key = api_key
 
-        if kwargs.get("api_base"):
-            openai.api_base = kwargs["api_base"]
+        if kwargs.get("base_url"):
+            print(kwargs)
+            openai.base_url = kwargs["base_url"]
 
         self.kwargs = {
             "temperature": 0.0,
@@ -78,7 +78,7 @@ class GPT3(LM):
     def _openai_client():
         return openai
 
-    def basic_request(self, prompt: str, **kwargs) -> OpenAIObject:
+    def basic_request(self, prompt: str, **kwargs) -> OpenAI:
         raw_kwargs = kwargs
 
         kwargs = {**self.kwargs, **kwargs}
@@ -106,11 +106,11 @@ class GPT3(LM):
 
     @backoff.on_exception(
         backoff.expo,
-        (openai.error.RateLimitError, openai.error.ServiceUnavailableError, openai.error.APIError),
+        (RateLimitError, InternalServerError, APIError),
         max_time=1000,
         on_backoff=backoff_hdlr,
     )
-    def request(self, prompt: str, **kwargs) -> OpenAIObject:
+    def request(self, prompt: str, **kwargs) -> OpenAI:
         """Handles retreival of GPT-3 completions whilst handling rate limiting and caching."""
         if "model_type" in kwargs:
             del kwargs["model_type"]
@@ -183,7 +183,7 @@ class GPT3(LM):
 
 @CacheMemory.cache
 def cached_gpt3_request_v2(**kwargs):
-    return openai.Completion.create(**kwargs)
+    return openai.completions.create(**kwargs)
 
 
 @functools.lru_cache(maxsize=None if cache_turn_on else 0)
@@ -196,15 +196,15 @@ cached_gpt3_request = cached_gpt3_request_v2_wrapped
 
 
 @CacheMemory.cache
-def _cached_gpt3_turbo_request_v2(**kwargs) -> OpenAIObject:
+def _cached_gpt3_turbo_request_v2(**kwargs) -> OpenAI:
     if "stringify_request" in kwargs:
         kwargs = json.loads(kwargs["stringify_request"])
-    return cast(OpenAIObject, openai.ChatCompletion.create(**kwargs))
+    return cast(OpenAI, openai.chat.completions.create(**kwargs))
 
 
 @functools.lru_cache(maxsize=None if cache_turn_on else 0)
 @NotebookCacheMemory.cache
-def _cached_gpt3_turbo_request_v2_wrapped(**kwargs) -> OpenAIObject:
+def _cached_gpt3_turbo_request_v2_wrapped(**kwargs) -> OpenAI:
     return _cached_gpt3_turbo_request_v2(**kwargs)
 
 
